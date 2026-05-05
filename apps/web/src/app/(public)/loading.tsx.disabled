@@ -1,0 +1,5 @@
+export default function Loading() {
+  // Minimal loading placeholder - maintains layout stability and prevents flash
+  // Using bg-inherit ensures no color change during navigation
+  return <div className="min-h-[50vh] bg-inherit" aria-busy="true" aria-label="جاري التحميل..." />;
+}

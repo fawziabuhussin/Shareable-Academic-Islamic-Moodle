@@ -1,0 +1,586 @@
+// Prisma Schema for Zad Al-Hidaya Academy Platform
+// Supports both SQLite (development) and PostgreSQL (production)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Non-pooler URL for migrations (Neon pooler often times out on advisory locks). Set explicitly or derive via scripts/ensure-direct-url.js
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id            String    @id @default(uuid())
+  name          String
+  firstName     String?   // الاسم الشخصي
+  fatherName    String?   // اسم الوالد
+  familyName    String?   // اسم العائلة
+  email         String    @unique
+  passwordHash  String?
+  provider      String?   // GOOGLE, APPLE, EMAIL
+  providerId    String?   // OAuth provider user ID
+  role          String    @default("STUDENT") // ADMIN, TEACHER, STUDENT
+  blocked       Boolean   @default(false)
+
+  // Profile fields
+  dateOfBirth   DateTime? // تاريخ الولادة
+  phone         String?   // الهاتف
+  profession    String?   // المهنة
+  gender        String?   // الجنس (MALE/FEMALE)
+  idNumber      String?   // رقم الهوية
+  location      String?   // البلد
+  profileComplete Boolean @default(false) // Track if user completed profile
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  coursesTaught Course[]
+  enrollments  Enrollment[]
+  progress     LessonProgress[]
+  quizAttempts QuizAttempt[]
+  refreshTokens RefreshToken[]
+  homeworkSubmissions HomeworkSubmission[]
+  examAttempts ExamAttempt[]
+  gradesFinalizedEnrollments Enrollment[] @relation("GradesFinalizedBy")
+  resourcesCreated Resource[] @relation("ResourceCreator")
+  reportsSubmitted ContentReport[] @relation("ReportedBy")
+  reportsReviewed  ContentReport[] @relation("ReviewedBy")
+  questionsAsked   LessonQuestion[] @relation("QuestionAskedBy")
+  questionsAnswered LessonQuestion[] @relation("QuestionAnsweredBy")
+
+  @@index([email])
+  @@index([role])
+  @@index([provider, providerId])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  courses Course[]
+
+  @@index([order])
+}
+
+model Course {
+  id          String        @id @default(uuid())
+  title       String
+  description String?
+  coverImage  String?
+  categoryId  String
+  teacherId   String
+  status      String        @default("DRAFT") // DRAFT, PUBLISHED
+  lifecycle   String        @default("DEFAULT") // DEFAULT, ONGOING  (extensible enum)
+  price       Float?        @default(0)
+  readingWeight Float       @default(100) // Percentage of final grade from lesson completion (0-100)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  category    Category      @relation(fields: [categoryId], references: [id])
+  teacher     User          @relation(fields: [teacherId], references: [id])
+  modules     Module[]
+  enrollments Enrollment[]
+  liveSessions LiveSession[]
+  quizzes     Quiz[]
+  homeworks   Homework[]
+  exams       Exam[]
+  resources   Resource[]
+  contentReports ContentReport[]
+  lessonQuestions LessonQuestion[]
+  prerequisites CoursePrerequisite[] @relation("CoursePrerequisites")
+  requiredFor CoursePrerequisite[] @relation("CoursePrerequisiteOf")
+
+  @@index([categoryId])
+  @@index([teacherId])
+  @@index([status])
+}
+
+model CoursePrerequisite {
+  courseId             String
+  prerequisiteCourseId String
+
+  course        Course @relation("CoursePrerequisites", fields: [courseId], references: [id], onDelete: Cascade)
+  prerequisite  Course @relation("CoursePrerequisiteOf", fields: [prerequisiteCourseId], references: [id], onDelete: Restrict)
+
+  @@id([courseId, prerequisiteCourseId])
+  @@index([prerequisiteCourseId])
+}
+
+model Module {
+  id        String   @id @default(uuid())
+  courseId String
+  title     String
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course  Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons Lesson[]
+
+  @@index([courseId])
+  @@index([order])
+}
+
+model Lesson {
+  id              String     @id @default(uuid())
+  moduleId        String
+  title           String
+  type            String     // VIDEO, TEXT, LIVE, PLAYLIST
+  order           Int        @default(0)
+  youtubeUrl      String?    // Single video URL or playlist URL
+  youtubePlaylistId String?  // YouTube playlist ID
+  textContent     String?
+  durationMinutes Int?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  module   Module          @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  progress LessonProgress[]
+  resources Resource[]
+  contentReports ContentReport[]
+  lessonQuestions LessonQuestion[]
+
+  @@index([moduleId])
+  @@index([order])
+}
+
+model LiveSession {
+  id          String              @id @default(uuid())
+  courseId    String
+  title       String
+  scheduledAt DateTime
+  provider    String              // YOUTUBE, FACEBOOK, ZOOM, MEET, OTHER
+  embedUrl    String
+  notes       String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId])
+  @@index([scheduledAt])
+}
+
+model Enrollment {
+  id        String           @id @default(uuid())
+  userId    String
+  courseId  String
+  status    String           @default("PENDING") // ACTIVE, PENDING, CANCELED
+  enrolledAt DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  // Grade finalization
+  finalScore     Float?    // Computed weighted final grade (null until finalized)
+  overrideScore  Float?    // Teacher manual override (takes precedence when set)
+  finalizedAt    DateTime? // When grades were finalized
+  finalizedById  String?   // Teacher/admin who finalized
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  finalizedBy  User?  @relation("GradesFinalizedBy", fields: [finalizedById], references: [id])
+
+  @@unique([userId, courseId])
+  @@index([userId])
+  @@index([courseId])
+  @@index([status])
+}
+
+model LessonProgress {
+  id          String   @id @default(uuid())
+  userId      String
+  lessonId    String
+  completedAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@index([userId])
+  @@index([lessonId])
+}
+
+model Quiz {
+  id        String   @id @default(uuid())
+  courseId  String
+  title     String
+  weightPercent Float    @default(0) // Percentage of final course grade (0-100)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course   Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  questions Question[]
+  attempts  QuizAttempt[]
+
+  @@index([courseId])
+}
+
+model Question {
+  id           String   @id @default(uuid())
+  quizId       String
+  prompt       String
+  choices      String   // JSON string: ["choice1", "choice2", ...]
+  correctIndex Int
+  order        Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  quiz Quiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  @@index([quizId])
+  @@index([order])
+}
+
+model QuizAttempt {
+  id          String   @id @default(uuid())
+  userId      String
+  quizId      String
+  score       Float
+  submittedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quiz Quiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([quizId])
+}
+
+model Homework {
+  id          String   @id @default(uuid())
+  courseId    String
+  moduleId    String?
+  lessonId    String?
+  title       String
+  description String
+  dueDate     DateTime
+  maxScore    Float    @default(100)
+  weightPercent Float    @default(0) // Percentage of final course grade (0-100)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  course  Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  submissions HomeworkSubmission[]
+
+  @@index([courseId])
+  @@index([dueDate])
+}
+
+model HomeworkSubmission {
+  id          String   @id @default(uuid())
+  homeworkId  String
+  userId      String
+  content     String
+  fileUrl     String?
+  score       Float?
+  feedback    String?
+  submittedAt DateTime @default(now())
+  gradedAt    DateTime?
+
+  homework Homework @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([homeworkId, userId])
+  @@index([homeworkId])
+  @@index([userId])
+}
+
+model Exam {
+  id          String   @id @default(uuid())
+  courseId    String
+  title       String
+  description String
+  durationMinutes Int
+  startDate   DateTime
+  endDate     DateTime
+  maxScore           Float    @default(100)
+  passingScore       Float    @default(60)
+  maxAttempts        Int      @default(2)    // 0 = unlimited (until pass), 1 = no retake, 2+ = specific limit
+  retakeScorePercent Float    @default(75)   // Percentage applied to retake scores (75 = 75% of raw)
+  weightPercent      Float    @default(0) // Percentage of final course grade (0-100)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  course    Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  questions ExamQuestion[]
+  attempts  ExamAttempt[]
+
+  @@index([courseId])
+  @@index([startDate])
+}
+
+model ExamQuestion {
+  id          String @id @default(uuid())
+  examId      String
+  prompt      String
+  type        String @default("MULTIPLE_CHOICE") // MULTIPLE_CHOICE, TEXT, ESSAY
+  choices     String? // JSON string: ["choice1", "choice2", ...] - null for text/essay questions
+  correctIndex Int? // null for text/essay questions
+  explanation String? // Explanation for the correct answer
+  points      Float  @default(1)
+  order       Int    @default(0)
+  createdAt   DateTime @default(now())
+
+  exam   Exam               @relation(fields: [examId], references: [id], onDelete: Cascade)
+  images ExamQuestionImage[]
+
+  @@index([examId])
+  @@index([order])
+}
+
+model ExamQuestionImage {
+  id         String @id @default(uuid())
+  questionId String
+  imageUrl   String
+  order      Int    @default(0)
+  createdAt  DateTime @default(now())
+
+  question ExamQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+  @@index([order])
+}
+
+model ExamAttempt {
+  id            String   @id @default(uuid())
+  examId        String
+  userId        String
+  attemptNumber Int      @default(1)       // 1 = first attempt, 2 = retake
+  isRetake      Boolean  @default(false)   // Explicit flag for retake attempts
+  answers       String   // JSON string: {questionId: answerIndex}
+  score         Float?
+  effectiveScore Float?   // Score after retake penalty. For first attempts = score. For retakes = score * (retakeScorePercent / 100)
+  status        String   @default("PENDING") // PENDING, GRADED, AUTO_GRADED
+  submittedAt   DateTime @default(now())
+  startedAt     DateTime @default(now())
+
+  exam Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, userId, attemptNumber])
+  @@index([examId])
+  @@index([userId])
+  @@index([status])
+}
+
+
+
+model Resource {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  url         String
+  order       Int      @default(0)
+  
+  // Polymorphic relationship - one of these will be set
+  courseId    String?
+  lessonId    String?
+  
+  // Audit fields
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  course      Course?  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lesson      Lesson?  @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  createdBy   User     @relation("ResourceCreator", fields: [createdById], references: [id])
+  
+  @@index([courseId])
+  @@index([lessonId])
+  @@index([order])
+  @@index([createdById])
+}
+
+model ContentReport {
+  id          String   @id @default(uuid())
+  
+  // Reporter info
+  reporterId  String
+  reporter    User     @relation("ReportedBy", fields: [reporterId], references: [id], onDelete: Cascade)
+  
+  // Content location
+  courseId    String
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessonId    String
+  lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  
+  // Report details
+  type        String   // VIDEO_ERROR, TEXT_ERROR, AUDIO_ERROR, RESOURCE_ERROR, CONTENT_MISSING, OTHER
+  description String
+  timestamp   String?  // For video errors (e.g., "02:34")
+  
+  // Status tracking
+  status      String   @default("NEW") // NEW, IN_REVIEW, RESOLVED, DISMISSED
+  reviewerId  String?
+  reviewer    User?    @relation("ReviewedBy", fields: [reviewerId], references: [id])
+  reviewNote  String?
+  
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  resolvedAt  DateTime?
+  
+  @@index([courseId])
+  @@index([lessonId])
+  @@index([reporterId])
+  @@index([reviewerId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model LessonQuestion {
+  id           String   @id @default(uuid())
+  
+  // Student who asked
+  studentId    String
+  student      User     @relation("QuestionAskedBy", fields: [studentId], references: [id], onDelete: Cascade)
+  
+  // Content location
+  courseId     String
+  course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessonId     String
+  lesson       Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  
+  // Question content
+  question     String
+  answer       String?
+  
+  // Status tracking
+  status       String   @default("PENDING") // PENDING, ANSWERED
+  answeredById String?
+  answeredBy   User?    @relation("QuestionAnsweredBy", fields: [answeredById], references: [id])
+  answeredAt   DateTime?
+  
+  // Timestamps
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@index([courseId])
+  @@index([lessonId])
+  @@index([studentId])
+  @@index([answeredById])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OldGrade {
+  id              Int      @id @default(autoincrement())
+  grade           Int      // Raw score (0-100)
+  courseNumber     String   // Zero-padded 3-digit course number (e.g., "001")
+  studentIdNumber String   // Student national ID from old system
+  bonus           Int      // Bonus points
+  finalGrade      Int      // Grade + Bonus, capped at 100
+  courseId         String   // Resolved course UUID from courses-output.csv
+
+  @@unique([studentIdNumber, courseNumber])
+  @@index([studentIdNumber])
+}
+
+/// Logged-in announcements (home + student dashboard); optional gender-specific CTAs (managed by admins).
+model HomePromotion {
+  id        String    @id @default(uuid())
+  title     String
+  body      String?
+  imageUrl  String?
+  /// Default link when profile has no gender or as fallback for MALE/FEMALE
+  linkUrl   String?
+  linkLabel String?
+  /// Optional separate CTA for students with gender MALE (ذكور)
+  linkUrlMale   String?
+  linkLabelMale String?
+  /// Optional separate CTA for students with gender FEMALE (إناث)
+  linkUrlFemale   String?
+  linkLabelFemale String?
+  /// Optional Zoom meeting or webinar URL (https only)
+  zoomUrl    String?
+  /// Optional YouTube channel, video, or playlist URL (https only)
+  youtubeUrl String?
+  active    Boolean   @default(true)
+  sortOrder Int       @default(0)
+  startsAt  DateTime?
+  endsAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([active, sortOrder])
+}
+
+/// Singleton (id = 1): global Zoom live button + weekly schedule (Asia/Jerusalem by default).
+model ZoomLiveSettings {
+  id                   Int      @id @default(1)
+  zoomUrl              String   @default("")
+  timezone             String   @default("Asia/Jerusalem")
+  /// JSON: [{ "dayOfWeek": 0-6 (0=Sunday), "start": "HH:mm", "end": "HH:mm" }]
+  weeklyScheduleJson   String   @default("[]")
+  /// AUTO | FORCE_LIVE | FORCE_OFF
+  manualOverride       String   @default("AUTO")
+  showButton           Boolean  @default(true)
+  nextSessionMessageAr String?
+  buttonLabelAr        String   @default("الدخول إلى البث المباشر")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+/// Singleton (id = 1): CTA links for public pages (registration, YouTube, maps).
+model SiteContentSettings {
+  id               Int      @id @default(1)
+  registrationUrl  String
+  youtubeUrl       String
+  mapsInfoUrl      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model StudentInquiry {
+  id            String   @id @default(uuid())
+  name          String
+  email         String
+  phone         String?
+  subject       String
+  body          String
+  status        String   @default("NEW") // NEW, ANSWERED, ARCHIVED
+  adminAnswerAr String?
+  answeredAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  publishedFaq PublicFaqEntry?
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+/// Published Q&A on the public استفسارات page; optional link to a student inquiry.
+model PublicFaqEntry {
+  id              String          @id @default(uuid())
+  questionAr      String
+  answerAr        String
+  sortOrder       Int             @default(0)
+  isVisible       Boolean         @default(true)
+  sourceInquiryId String?         @unique
+  sourceInquiry   StudentInquiry? @relation(fields: [sourceInquiryId], references: [id], onDelete: SetNull)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([isVisible, sortOrder])
+}

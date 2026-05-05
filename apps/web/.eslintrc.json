@@ -1,0 +1,16 @@
+{
+  "extends": "next/core-web-vitals",
+  "rules": {
+    "no-restricted-globals": [
+      "error",
+      {
+        "name": "alert",
+        "message": "Use showSuccess/showError/showWarning from '@/lib/toast' instead of alert()."
+      },
+      {
+        "name": "confirm",
+        "message": "Use ConfirmDialog from '@/components/ConfirmDialog' and useConfirmDialog from '@/lib/useConfirmDialog' instead of confirm()."
+      }
+    ]
+  }
+}
